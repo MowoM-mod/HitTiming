@@ -1,0 +1,12 @@
+{
+  "$schema": "https://raw.githubusercontent.com/beat-saber-modding-group/BSIPA-MetadataFileSchema/master/Schema.json",
+  "id": "HitTiming",
+  "name": "HitTiming",
+  "author": "MowoM",
+  "version": "0.1.0",
+  "description": "Displays the corrected timing delta in milliseconds below each hit.",
+  "gameVersion": "1.29.1",
+  "dependsOn": {
+    "BSIPA": "^4.2.2"
+  }
+}
