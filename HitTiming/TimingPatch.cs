@@ -10,15 +10,187 @@ namespace HitTiming
 {
     internal static class TimingPatch
     {
-        private static UnityEngine.Object? _cachedSpawnController;
         private static float _cachedNjs;
-
-        private static Type? _spawnControllerType;
-        private static bool _spawnControllerTypeResolved;
 
         private static readonly Dictionary<Type, Dictionary<string, MemberInfo?>>
             MemberCache =
                 new Dictionary<Type, Dictionary<string, MemberInfo?>>();
+
+        private static readonly Dictionary<Type, MethodInfo?>
+            DifficultyDataMethodCache =
+                new Dictionary<Type, MethodInfo?>();
+
+        private static readonly Dictionary<Type, MethodInfo?>
+            DefaultNjsMethodCache =
+                new Dictionary<Type, MethodInfo?>();
+
+        internal static MethodBase? FindLevelRefreshMethod()
+        {
+            var type = AccessTools.TypeByName("StandardLevelDetailView");
+
+            if (type == null)
+                return null;
+
+            return AccessTools.Method(type, "RefreshContent");
+        }
+
+        internal static void LevelRefreshPostfix(object __instance)
+        {
+            _cachedNjs = 0f;
+
+            if (__instance == null)
+                return;
+
+            try
+            {
+                var beatmapKey = ReadMember(__instance, "beatmapKey");
+                var beatmapLevel = ReadMember(__instance, "_beatmapLevel");
+
+                if (beatmapKey == null || beatmapLevel == null)
+                    return;
+
+                var characteristic =
+                    ReadMember(beatmapKey, "beatmapCharacteristic");
+
+                var difficulty =
+                    ReadMember(beatmapKey, "difficulty");
+
+                if (characteristic == null || difficulty == null)
+                    return;
+
+                var basicData = GetDifficultyBeatmapData(
+                    beatmapLevel,
+                    characteristic,
+                    difficulty);
+
+                var njs = basicData != null
+                    ? Convert.ToSingle(
+                        ReadMember(basicData, "noteJumpMovementSpeed") ?? 0f)
+                    : 0f;
+
+                if (!IsValidNjs(njs))
+                    njs = GetDefaultNoteJumpMovementSpeed(difficulty);
+
+                if (IsValidNjs(njs))
+                    _cachedNjs = njs;
+            }
+            catch
+            {
+                _cachedNjs = 0f;
+            }
+        }
+
+        private static object? GetDifficultyBeatmapData(
+            object beatmapLevel,
+            object characteristic,
+            object difficulty)
+        {
+            var type = beatmapLevel.GetType();
+
+            if (!DifficultyDataMethodCache.TryGetValue(type, out var method))
+            {
+                const BindingFlags flags =
+                    BindingFlags.Instance |
+                    BindingFlags.Public |
+                    BindingFlags.NonPublic;
+
+                method = null;
+
+                for (var current = type;
+                     current != null;
+                     current = current.BaseType)
+                {
+                    method = current.GetMethods(flags)
+                        .FirstOrDefault(candidate =>
+                        {
+                            if (candidate.Name != "GetDifficultyBeatmapData")
+                                return false;
+
+                            var parameters = candidate.GetParameters();
+
+                            return parameters.Length == 2 &&
+                                   parameters[0].ParameterType.IsInstanceOfType(characteristic) &&
+                                   parameters[1].ParameterType.IsInstanceOfType(difficulty);
+                        });
+
+                    if (method != null)
+                        break;
+                }
+
+                DifficultyDataMethodCache[type] = method;
+            }
+
+            return method?.Invoke(
+                beatmapLevel,
+                new[] { characteristic, difficulty });
+        }
+
+        private static float GetDefaultNoteJumpMovementSpeed(
+            object difficulty)
+        {
+            var type = difficulty.GetType();
+
+            if (!DefaultNjsMethodCache.TryGetValue(type, out var method))
+            {
+                method = FindDefaultNjsMethod(type);
+                DefaultNjsMethodCache[type] = method;
+            }
+
+            if (method == null)
+                return 0f;
+
+            var result = method.Invoke(null, new[] { difficulty });
+
+            return result != null
+                ? Convert.ToSingle(result)
+                : 0f;
+        }
+
+        private static MethodInfo? FindDefaultNjsMethod(Type difficultyType)
+        {
+            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                Type[] types;
+
+                try
+                {
+                    types = assembly.GetTypes();
+                }
+                catch (ReflectionTypeLoadException exception)
+                {
+                    types = exception.Types
+                        .Where(type => type != null)
+                        .Cast<Type>()
+                        .ToArray();
+                }
+                catch
+                {
+                    continue;
+                }
+
+                foreach (var type in types)
+                {
+                    const BindingFlags flags =
+                        BindingFlags.Static |
+                        BindingFlags.Public |
+                        BindingFlags.NonPublic;
+
+                    foreach (var method in type.GetMethods(flags))
+                    {
+                        if (method.Name != "DefaultNoteJumpMovementSpeed")
+                            continue;
+
+                        var parameters = method.GetParameters();
+
+                        if (parameters.Length == 1 &&
+                            parameters[0].ParameterType == difficultyType)
+                            return method;
+                    }
+                }
+            }
+
+            return null;
+        }
 
         internal static IEnumerable<MethodBase> TargetMethods()
         {
@@ -128,43 +300,21 @@ namespace HitTiming
                         parameters[0].ParameterType != typeof(float))
                         continue;
 
+                    if (method.IsAbstract)
+                        continue;
+
+                    try
+                    {
+                        if (method.GetMethodBody() == null)
+                            continue;
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
                     yield return method;
                 }
-            }
-        }
-
-        internal static void SpawnControllerStartPostfix(
-            object __instance)
-        {
-            if (__instance == null)
-                return;
-
-            CacheSpawnController(__instance);
-        }
-
-        private static void CacheSpawnController(object instance)
-        {
-            var spawnController = instance as UnityEngine.Object;
-
-            if (spawnController == null)
-                return;
-
-            _cachedSpawnController = spawnController;
-            _cachedNjs = 0f;
-
-            try
-            {
-                var value = ReadMember(
-                    spawnController,
-                    "noteJumpMovementSpeed");
-
-                if (value != null)
-                    _cachedNjs = Convert.ToSingle(value);
-            }
-            catch (Exception exception)
-            {
-                Debug.LogWarning(
-                    $"[HitTiming] Could not preload NJS: {exception.Message}");
             }
         }
 
@@ -215,7 +365,8 @@ namespace HitTiming
                     !float.IsNaN(njs) &&
                     !float.IsInfinity(njs))
                 {
-                    correctedDeviation -= (cutPointZ - config.CorrectionDistance) / njs;
+                    correctedDeviation -=
+                        (cutPointZ - config.CorrectionDistance) / njs;
                 }
 
                 var deviationMs = correctedDeviation * 1000f;
@@ -247,8 +398,6 @@ namespace HitTiming
 
                 var textValue = $"{deviationMs:+0;-0;0} ms";
 
-                // Il testo viene associato all'istanza dell'effetto pooled
-                // e riutilizzato alle successive inizializzazioni.
                 TimingTextLifetime.Show(
                     effectComponent.gameObject,
                     sourceText,
@@ -290,50 +439,6 @@ namespace HitTiming
 
         private static float GetNoteJumpMovementSpeed()
         {
-            if (_cachedSpawnController != null)
-            {
-                if (IsValidNjs(_cachedNjs))
-                    return _cachedNjs;
-
-                // Il controller è già noto: rilegge il valore senza
-                // eseguire una nuova ricerca globale.
-                try
-                {
-                    var value = ReadMember(
-                        _cachedSpawnController,
-                        "noteJumpMovementSpeed");
-
-                    if (value != null)
-                        _cachedNjs = Convert.ToSingle(value);
-                }
-                catch
-                {
-                    return 0f;
-                }
-
-                if (IsValidNjs(_cachedNjs))
-                    return _cachedNjs;
-            }
-
-            if (!_spawnControllerTypeResolved)
-            {
-                _spawnControllerType =
-                    AccessTools.TypeByName("BeatmapObjectSpawnController");
-
-                _spawnControllerTypeResolved = true;
-            }
-
-            if (_spawnControllerType == null)
-                return 0f;
-
-            var spawnController =
-                UnityEngine.Object.FindObjectOfType(_spawnControllerType);
-
-            if (spawnController == null)
-                return 0f;
-
-            CacheSpawnController(spawnController);
-
             return IsValidNjs(_cachedNjs) ? _cachedNjs : 0f;
         }
 

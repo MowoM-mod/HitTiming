@@ -40,8 +40,8 @@ You can edit these values to match your preferences and playing style.
 
 ## Requirements
 
-- Beat Saber 1.29.1
-- BSIPA 4.2.2 or later
+- Beat Saber 1.40.8
+- BSIPA 4.3.6 or later
 
 ## Building from source
 

@@ -1,6 +1,5 @@
 using System;
 using System.IO;
-using System.Reflection;
 using HarmonyLib;
 using IPA;
 using IPA.Logging;
@@ -27,30 +26,20 @@ namespace HitTiming
 
             _harmony = new Harmony("com.monolith.hittiming");
 
-            var spawnControllerPatched = false;
+            var levelRefreshMethod =
+                TimingPatch.FindLevelRefreshMethod();
 
-            var spawnControllerType =
-                AccessTools.TypeByName("BeatmapObjectSpawnController");
+            var levelRefreshPatched = false;
 
-            var spawnControllerStart = spawnControllerType?.GetMethod(
-                "Start",
-                BindingFlags.Instance |
-                BindingFlags.Public |
-                BindingFlags.NonPublic |
-                BindingFlags.DeclaredOnly,
-                null,
-                Type.EmptyTypes,
-                null);
-
-            if (spawnControllerStart != null)
+            if (levelRefreshMethod != null)
             {
                 _harmony.Patch(
-                    spawnControllerStart,
+                    levelRefreshMethod,
                     postfix: new HarmonyMethod(
                         typeof(TimingPatch),
-                        nameof(TimingPatch.SpawnControllerStartPostfix)));
+                        nameof(TimingPatch.LevelRefreshPostfix)));
 
-                spawnControllerPatched = true;
+                levelRefreshPatched = true;
             }
 
             var entryPointsPatched = 0;
@@ -81,16 +70,15 @@ namespace HitTiming
 
             logger.Info(
                 $"HitTiming initialized. " +
-                $"Spawn controller preload patched: {spawnControllerPatched}. " +
+                $"Level refresh patched: {levelRefreshPatched}. " +
                 $"Timing entry points patched: {entryPointsPatched}. " +
                 $"Fade methods patched: {fadeMethodsPatched}.");
 
-            if (!spawnControllerPatched)
+            if (!levelRefreshPatched)
             {
                 logger.Warn(
-                    "HitTiming could not find a declared " +
-                    "BeatmapObjectSpawnController.Start() method. " +
-                    "NJS will use the fallback lookup on the first hit.");
+                    "HitTiming could not find StandardLevelDetailView.RefreshContent. " +
+                    "NJS correction will remain unavailable.");
             }
 
             if (entryPointsPatched == 0)
